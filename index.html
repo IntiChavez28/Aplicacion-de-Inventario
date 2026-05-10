@@ -214,7 +214,9 @@ input::placeholder{color:var(--muted)}
   <div style="display:flex;gap:10px;margin-top:4px">
     <button class="btn btn-ghost btn-full" onclick="exportData('json')">⬇ JSON</button>
     <button class="btn btn-ghost btn-full" onclick="exportData('csv')">⬇ CSV</button>
+    <button class="btn btn-ghost btn-full" onclick="triggerImport()">⬆ Importar</button>
   </div>
+  <input type="file" id="import-file-input" accept=".json" style="display:none" onchange="importJSON(event)">
   <div style="margin-top:8px">
     <button class="btn btn-danger btn-full btn-sm" onclick="resetDay()">⚠ Cerrar día y archivar</button>
   </div>
@@ -331,7 +333,15 @@ input::placeholder{color:var(--muted)}
   <div class="modal">
     <div class="modal-handle"></div>
     <div class="modal-title">◉ Registrar Venta</div>
-    <div style="font-size:12px;color:var(--muted);margin-bottom:14px;font-family:var(--mono)">Toca la talla/variante que se vendió — descuenta 1 pieza.</div>
+    <!-- Search bar -->
+    <input type="text" id="sell-search" placeholder="🔍 Buscar producto..."
+      style="margin-bottom:10px;background:var(--bg3);border-color:var(--border2)"
+      oninput="renderSellGrid()">
+    <!-- Category filter chips -->
+    <div class="filter-bar" id="sell-cat-filters" style="margin-bottom:10px"></div>
+    <div style="font-size:11px;color:var(--muted);margin-bottom:10px;font-family:var(--mono)">
+      Toca la talla/variante que se vendió — descuenta 1 pieza.
+    </div>
     <div class="sell-grid" id="sell-grid"></div>
     <div style="margin-top:14px"><button class="btn btn-ghost btn-full" onclick="closeSell()">Cerrar</button></div>
   </div>
@@ -647,31 +657,61 @@ function deleteProd(){
 }
 
 // ════════════════════════ SELL MODAL ════════════════════════
+let sellFilter = 'all';
+
 function openSell(){
-  const grid=document.getElementById('sell-grid');
-  if(!S.products.length){
-    grid.innerHTML='<div class="empty-state" style="grid-column:1/-1">Sin productos. Agrega uno primero.</div>';
-  } else {
-    grid.innerHTML=S.products.map(p=>{
-      const tot=totStock(p);
-      const allOut=tot<=0;
-      const vbtns=p.variants.map(v=>{
-        const vout=v.stock<=0;
-        const vs=v.stock===0?'crit':v.stock<=2?'low':'ok';
-        return `<button class="vbtn ${vout?'out':''}" onclick="registerSale('${p.id}','${esc(v.name)}');event.stopPropagation()">
-          <span class="vbtn-name">${esc(v.name)}</span>
-          <span class="vbtn-stock ${vs}">${vout?'✕':v.stock+'pz'}</span>
-        </button>`;
-      }).join('');
-      return `<div class="spb ${allOut?'out':''}">
-        <div class="spb-name">${esc(p.name)}</div>
-        <div class="spb-price">${fmt(p.price)}</div>
-        <div class="spb-vbtns">${vbtns}</div>
-      </div>`;
-    }).join('');
-  }
+  sellFilter = 'all';
+  // reset search
+  const si = document.getElementById('sell-search');
+  if(si) si.value = '';
+  // build category chips
+  const cats = [...new Set(S.products.map(p=>p.category))];
+  document.getElementById('sell-cat-filters').innerHTML =
+    `<div class="fchip active" id="sfchip-all" onclick="setSellFilter('all')">Todos</div>`
+    + cats.map(c=>`<div class="fchip" id="sfchip-${esc(c)}" onclick="setSellFilter('${esc(c)}')">${esc(c)}</div>`).join('');
+  renderSellGrid();
   document.getElementById('sell-modal').classList.add('open');
 }
+
+function setSellFilter(cat){
+  sellFilter = cat;
+  document.querySelectorAll('#sell-cat-filters .fchip').forEach(el=>el.classList.remove('active'));
+  const el = document.getElementById('sfchip-'+(cat==='all'?'all':esc(cat)));
+  if(el) el.classList.add('active');
+  renderSellGrid();
+}
+
+function renderSellGrid(){
+  const query = (document.getElementById('sell-search')?.value||'').toLowerCase().trim();
+  let prods = S.products;
+  if(sellFilter !== 'all') prods = prods.filter(p=>p.category===sellFilter);
+  if(query) prods = prods.filter(p=>p.name.toLowerCase().includes(query) || p.category.toLowerCase().includes(query));
+
+  const grid = document.getElementById('sell-grid');
+  if(!prods.length){
+    grid.innerHTML='<div class="empty-state" style="grid-column:1/-1;padding:20px 0"><div class="icon" style="font-size:24px">▦</div>'+(S.products.length===0?'Sin productos. Agrega uno primero.':'Sin resultados.')+'</div>';
+    return;
+  }
+  grid.innerHTML = prods.map(p=>{
+    const tot=totStock(p);
+    const allOut=tot<=0;
+    const vbtns=p.variants.map(v=>{
+      const vout=v.stock<=0;
+      const vs=v.stock===0?'crit':v.stock<=2?'low':'ok';
+      return `<button class="vbtn ${vout?'out':''}" onclick="registerSale('${p.id}','${esc(v.name)}');event.stopPropagation()">
+        <span class="vbtn-name">${esc(v.name)}</span>
+        <span class="vbtn-stock ${vs}">${vout?'✕':v.stock+'pz'}</span>
+      </button>`;
+    }).join('');
+    return `<div class="spb ${allOut?'out':''}">
+      <div class="spb-name">${esc(p.name)}</div>
+      <div style="font-size:9px;color:var(--muted);font-family:var(--mono);margin-bottom:4px">${esc(p.category)}</div>
+      <div class="spb-price">${fmt(p.price)}</div>
+      <div class="spb-vbtns">${vbtns}</div>
+    </div>`;
+  }).join('');
+}
+
 function closeSell(){document.getElementById('sell-modal').classList.remove('open');}
 
 function registerSale(pid,vname){
@@ -691,7 +731,8 @@ function registerSale(pid,vname){
   persist(KEYS.products,S.products);
   persist(KEYS.sales,S.sales);
   toast(`+${fmt(sale.gain)} · ${p.name} [${vname}]`);
-  openSell();renderDash();
+  renderSellGrid(); // refresh without resetting filter/search
+  renderDash();
 
   const rem=S.products[pi].variants[vi].stock;
   if(rem===0) setTimeout(()=>toast(`✕ Agotado [${vname}] · ${p.name}`,'error'),420);
@@ -928,14 +969,78 @@ function delCat(name){
   renderCatManage();toast('Categoría eliminada','info');
 }
 
+// ════════════════════════ IMPORT JSON ════════════════════════
+function triggerImport(){
+  if(!confirm('⚠ Importar un JSON reemplazará todos los datos actuales (productos, historial, categorías).\n\n¿Continuar?'))return;
+  document.getElementById('import-file-input').click();
+}
+
+function importJSON(event){
+  const file = event.target.files[0];
+  if(!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      const data = JSON.parse(e.target.result);
+      // Validate minimally
+      if(!data.inventario && !data.products){
+        toast('Archivo JSON inválido o sin inventario','error'); return;
+      }
+      // Support both export formats
+      const products  = data.inventario || data.products || [];
+      const history   = data.historial  || data.history  || [];
+      const cats      = data.categorias || data.cats     || [...DEF_CATS];
+      const expCats   = data.expCats    || S.expCats;
+      const expenses  = data.gastos     || {};
+      const sales     = data.ventas     || [];
+
+      // Migrate old products that have no variants (legacy flat stock)
+      const migrated = products.map(p=>{
+        if(!p.variants || !p.variants.length){
+          return {...p, variants:[{name:'Único', stock: p.stock||0}]};
+        }
+        return p;
+      });
+
+      S.products  = migrated;
+      S.history   = history;
+      S.cats      = cats;
+      S.expCats   = expCats;
+      S.expenses  = expenses;
+      S.sales     = sales;
+
+      persist(KEYS.products,  S.products);
+      persist(KEYS.history,   S.history);
+      persist(KEYS.cats,      S.cats);
+      persist(KEYS.expCats,   S.expCats);
+      persist(KEYS.expenses,  S.expenses);
+      persist(KEYS.sales,     S.sales);
+
+      renderDash();
+      toast(`✓ Importado: ${S.products.length} productos, ${S.history.length} días en historial`);
+    } catch(err) {
+      toast('Error al leer el archivo JSON','error');
+    }
+    // reset input so same file can be re-selected
+    event.target.value = '';
+  };
+  reader.readAsText(file);
+}
+
 // ════════════════════════ EXPORT ════════════════════════
 function exportData(format){
   const{bruta,gastos,real,count,ingresos}=calcFin();
   const d=new Date();const ds=d.toLocaleDateString('es-MX');
   if(format==='json'){
     download('puestocontrol_'+d.toISOString().slice(0,10)+'.json',
-      JSON.stringify({fecha:ds,resumen:{ventas:count,ingresos,ganancia_bruta:bruta,gastos_operativos:gastos,ganancia_real:real},
-        gastos:S.expenses,ventas:S.sales,inventario:S.products},null,2),'application/json');
+      JSON.stringify({
+        fecha:ds,
+        resumen:{ventas:count,ingresos,ganancia_bruta:bruta,gastos_operativos:gastos,ganancia_real:real},
+        gastos:S.expenses, ventas:S.sales,
+        inventario:S.products,
+        historial:S.history,
+        cats:S.cats, expCats:S.expCats
+      },null,2),'application/json');
     toast('JSON descargado');
   } else {
     let csv='RESUMEN DEL DÍA\n';
